@@ -172,6 +172,123 @@ jobs:
             echo "ccache缓存命中详情:"
             ccache -sv
           fi
+
+                - name: 应用 KernelSU & SUSFS 补丁
+        if: inputs.susfs_enable
+        run: |
+          cd kernel_workspace
+          if [[ ${{ github.event.inputs.ksu_type }} == "sukisu" ]]; then
+            echo "正在添加SukiSU Ultra补丁..."
+            git clone https://github.com/ShirkNeko/susfs4ksu.git -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+            git clone https://github.com/ShirkNeko/SukiSU_patch.git
+            cp ./susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
+            cp ./susfs4ksu/kernel_patches/fs/* ./common/fs/
+            cp ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+            cp ./SukiSU_patch/69_hide_stuff.patch ./common/
+            cd ./common
+            patch -p1 < 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
+            patch -p1 < 69_hide_stuff.patch || true
+          elif [[ ${{ github.event.inputs.ksu_type }} == "ksunext" ]]; then
+            echo "正在添加KernelSU Next补丁..."
+            git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+            #由于KernelSU Next尚未更新并适配susfs 2.0.0，故回退至susfs 1.5.12
+            cd susfs4ksu && git checkout f450ec00bf592d080f59b01ff6f9242456c9a427 && cd ..
+            git clone https://github.com/WildKernels/kernel_patches.git
+            cp ./susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
+            cp ./susfs4ksu/kernel_patches/fs/* ./common/fs/
+            cp ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+            cp ./kernel_patches/next/scope_min_manual_hooks_v1.5.patch ./common/
+            cp ./kernel_patches/69_hide_stuff.patch ./common/
+            cd ./common
+            patch -p1 < 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
+            patch -p1 -N -F 3 < scope_min_manual_hooks_v1.5.patch || true
+            patch -p1 -N -F 3 < 69_hide_stuff.patch || true
+          elif [[ ${{ github.event.inputs.ksu_type }} == "mksu" ]]; then
+            echo "正在为 MKSU (5ec1cff/KernelSU)添加补丁..."
+            git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+            git clone https://github.com/ShirkNeko/SukiSU_patch.git
+            cp ./susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU/
+            # 临时修复：修复susfs补丁日志输出（由于上游KSU把部分Makefile代码移至Kbuild中，而susfs补丁未同步修改，故需修复susfs补丁修补位点）
+            PATCH_FILE="./KernelSU/10_enable_susfs_for_ksu.patch"
+            if [ -f "$PATCH_FILE" ]; then
+              if grep -q "a/kernel/Makefile" "$PATCH_FILE"; then
+                echo "检测到旧版 Makefile 补丁代码，正在执行修复..."
+                sed -i 's|kernel/Makefile|kernel/Kbuild|g' "$PATCH_FILE"
+                sed -i 's|.*compdb.*|@@ -75,4 +75,13 @@ ccflags-y += -DEXPECTED_HASH=\\"$(KSU_EXPECTED_HASH)\\"|' "$PATCH_FILE"
+                sed -i 's|^ clean:| ccflags-y += -Wno-strict-prototypes -Wno-int-conversion -Wno-gcc-compat -Wno-missing-prototypes|' "$PATCH_FILE"
+                sed -i 's|.*make -C.*| ccflags-y += -Wno-declaration-after-statement -Wno-unused-function|' "$PATCH_FILE"
+                echo "补丁修复完成！"
+              else
+                echo "补丁代码已修复至 Kbuild 或不匹配，跳过修改..."
+              fi
+            else
+              echo "未找到KSU补丁！"
+              exit 1
+            fi
+            cp ./susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
+            cp ./susfs4ksu/kernel_patches/fs/* ./common/fs/
+            cp ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+            cp ./SukiSU_patch/69_hide_stuff.patch ./common/
+            cd ./KernelSU
+            patch -p1 < 10_enable_susfs_for_ksu.patch || true
+            #为MKSU修正susfs 2.0.0补丁
+            wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/other_patch/mksu_supercalls.patch
+            patch -p1 < mksu_supercalls.patch || true
+            cd ../common
+            patch -p1 < 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
+            patch -p1 -N -F 3 < 69_hide_stuff.patch || true
+          else
+            echo "正在为原版 KernelSU (tiann/KernelSU)添加补丁..."
+            git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+            git clone https://github.com/ShirkNeko/SukiSU_patch.git
+            cp ./susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU/
+            # 临时修复：修复susfs补丁日志输出（由于上游KSU把部分Makefile代码移至Kbuild中，而susfs补丁未同步修改，故需修复susfs补丁修补位点）
+            PATCH_FILE="./KernelSU/10_enable_susfs_for_ksu.patch"
+            if [ -f "$PATCH_FILE" ]; then
+              if grep -q "a/kernel/Makefile" "$PATCH_FILE"; then
+                echo "检测到旧版 Makefile 补丁代码，正在执行修复..."
+                sed -i 's|kernel/Makefile|kernel/Kbuild|g' "$PATCH_FILE"
+                sed -i 's|.*compdb.*|@@ -75,4 +75,13 @@ ccflags-y += -DEXPECTED_HASH=\\"$(KSU_EXPECTED_HASH)\\"|' "$PATCH_FILE"
+                sed -i 's|^ clean:| ccflags-y += -Wno-strict-prototypes -Wno-int-conversion -Wno-gcc-compat -Wno-missing-prototypes|' "$PATCH_FILE"
+                sed -i 's|.*make -C.*| ccflags-y += -Wno-declaration-after-statement -Wno-unused-function|' "$PATCH_FILE"
+                echo "补丁修复完成！"
+              else
+                echo "补丁代码已修复至 Kbuild 或不匹配，跳过修改..."
+              fi
+            else
+              echo "未找到KSU补丁！"
+              exit 1
+            fi
+            cp ./susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
+            cp ./susfs4ksu/kernel_patches/fs/* ./common/fs/
+            cp ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+            cp ./SukiSU_patch/69_hide_stuff.patch ./common/
+            cd ./KernelSU
+            patch -p1 < 10_enable_susfs_for_ksu.patch || true
+            cd ../common
+            patch -p1 < 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
+            patch -p1 -N -F 3 < 69_hide_stuff.patch || true
+          fi
+
+                - name: 添加SUSFS 配置项
+        if: inputs.susfs_enable
+        run: |
+          cd kernel_workspace
+          echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> ./common/arch/arm64/configs/gki_defconfig
           
       - name: 应用lz4 1.10.0 & zstd 1.5.7补丁
         if: inputs.lz4_enable
